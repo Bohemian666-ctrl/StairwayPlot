@@ -1,0 +1,56 @@
+# Extrae genotipos desde un VCF, construye una matriz SNP × muestras y calcula estadísticas generales del archivo.
+scripts/01_vcf_diagnostics.py
+# Calcula el porcentaje de datos faltantes por muestra a partir del campo GT.
+scripts/02_missing_by_sample.py
+# Evalúa el número de SNPs por locus (CHROM) para identificar posibles problemas de linkage.
+scripts/03_locus_snp_stats.py
+# Genera automáticamente un archivo popfile.txt leyendo los nombres de las muestras directamente desde el VCF filtrado.
+scripts/04_generate_popfile.py
+# Pipeline en Bash
+pipeline/01_bcftools_filtering.sh
+#!/bin/bash
+
+VCF=Padol.vcf
+
+bgzip -c $VCF > Padol.vcf.gz
+tabix -p vcf Padol.vcf.gz
+
+bcftools view -m2 -M2 Padol.vcf.gz -Oz -o step1_biallelic.vcf.gz
+bcftools filter -S . -e 'FMT/DP<6' step1_biallelic.vcf.gz -Oz -o step2_dp6.vcf.gz
+bcftools view -i 'F_MISSING<0.25' step2_dp6.vcf.gz -Oz -o step3_missing25.vcf.gz
+
+bcftools view -Ob step3_missing25.vcf.gz -o tmp.bcf
+bcftools index tmp.bcf
+
+bcftools +prune tmp.bcf -n 1 -N 1st -w 0 -Ob -o pruned.bcf
+bcftools view -Oz pruned.bcf -o FINAL_filtered.vcf.gz
+tabix -p vcf FINAL_filtered.vcf.gz
+
+pipeline/02_easySFS.sh
+python easySFS/easySFS.py \
+-i FINAL_filtered.vcf.gz \
+-p popfile.txt \
+-o sfs_output \
+--proj 20 \
+--folded \
+-f
+
+pipeline/03_sfs_to_stairway.sh
+awk 'NR==2 {for(i=2;i<=11;i++) printf "%s ", $i; print ""}' \
+sfs_output/dadi/*.sfs > stairway.sfs
+
+# Script de ejecución general
+run_pipeline.sh
+
+#!/bin/bash
+
+bash pipeline/01_bcftools_filtering.sh
+python scripts/04_generate_popfile.py
+bash pipeline/02_easySFS.sh
+bash pipeline/03_sfs_to_stairway.sh
+
+## requirements.txt
+
+vcfpy
+pandas
+scipy
